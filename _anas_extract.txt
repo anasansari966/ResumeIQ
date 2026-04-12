@@ -1,0 +1,46 @@
+MOHD ANAS ANSARI
+DELHI, INDIA
+(cid:131) +91-9667623696 # anasansari671@gmail.com (cid:239) www.linkedin.com/in/mohd-anas-ansari-904002257
+Education
+Vellore Institute of Technology Aug. 2021 – July 2023
+Master of Science in Data Science Andhra Pradesh, India
+Jamia Hamdard University 2018 – 2021
+Bachelor of Computer Applications (BCA) New Delhi, India
+Relevant Coursework
+• Data Structures • Database Management • Deep Learning • Cloud Computing
+• Software Methodology • Artificial Intelligence • NLP • Big Data Analytics
+• Algorithms Analysis • Machine Learning • Computer Vision • Data Analytics
+Experience
+NuMinds AI October 2024 – December 2024
+Data Scientist Dubai, UAE
+• Developed conversational AI Agents using ODBC databases, enabling natural language queries and responses through
+SQLDatabaseToolkit and LangChain functions and create visualizations.
+• Integrated Stable Diffusion for generating high-quality synthetic images based on text inputs, enabling enhanced visual
+content generation for various applications.
+Jupiter AI Labs June 2024 – October 2024
+Machine Learning Engineer Noida, Uttar Pradesh
+• Developed models for audio-to-text classification and voice sentiment analysis, enhancing speech recognition and
+emotional detection from voice inputs.
+• Contributed to a US healthcare project using Large Language Models (LLMs) for data insertion, updates, and retrieval,
+improving data processing efficiency.
+Globtier Infotech Pvt Ltd February 2023 – June 2024
+Jr. AI Developer Noida, Uttar Pradesh
+• Developed an AI Agent for Data conversation, Data Visualization, Data Prediction, and Data transformation using NLP
+and LLM.
+• Developed a AI based product suggestion chatbot for Mcaffeine, and Norfolk Wine and Spirits.
+Projects
+Voice Cloning Project | Python, PyTorch, RVC Framework August 2024
+• Replicated voices via RVC framework (5-sec samples) using HuBERT/FAISS.
+• Automated preprocessing (Librosa), deployed on AWS Lambda. 95 percent similarity, 2-sec inference.
+3D Face Reconstruction | Python, DECA, Flask November 2023
+• Generated 3D meshes from images via DECA. OpenCV/Dlib landmarks + PyRender visualization.
+• 60 percent faster on TPUs, Flask API for user uploads.
+Synthetic Lipsync | Python, OpenCV, AWS EC2 October 2023
+• Synced lip movements to audio via Wav2Lip. OpenCV/FFmpeg preprocessing.
+• 89 percent accuracy, 24 FPS real-time. Batch AWS EC2 processing.
+Technical Skills
+Languages: Python, R, SQL
+ML/DL: Machine Learning, NLP, Computer Vision, Reinforcement Learning, Transformers, LLMs
+Frameworks: TensorFlow, PyTorch, Scikit-Learn, Stable Diffusion, RAG
+Tools: VS Code, Pycharm, AWS/Azure/GCP, OpenCV, PowerBI, Tableau, VectorDB (ChromaDB, FAISS, Pinecone)
+Generative AI: GANs, VAEs, WAV2LIP, RVC
