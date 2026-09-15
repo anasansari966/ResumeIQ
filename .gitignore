@@ -4,3 +4,4 @@ backend/.env
 __pycache__/
 venv/
 .venv/
+backend/templates/.extracted/

@@ -11,7 +11,7 @@ from app.deps import CurrentUser
 from app.models_db import JDAnalysis, Resume, TailoringSession
 from app.schemas import TailorSessionOut, TailorStartIn
 from app.services.ats_engine import score_resume_jd
-from app.services.resume_export import export_resume_pdf
+from app.services.resume_export import export_resume_pdf_with_mode
 from app.services.template_registry import first_resume_template_id
 from app.services.resume_generator import generate_tailored_resume, stream_tailored_resume_tokens
 
@@ -122,9 +122,18 @@ async def download_pdf(
     if not r or r.user_id != user.id:
         raise HTTPException(404, "Session not found")
     tid = template_id or ts.template_id
-    pdf_bytes = export_resume_pdf(ts.output_resume_json or {}, tid)
+    pdf_bytes, render_mode = export_resume_pdf_with_mode(ts.output_resume_json or {}, tid)
+    if pdf_bytes is None or render_mode == "latex_unavailable":
+        raise HTTPException(
+            status_code=503,
+            detail="PDF could not be generated. Please try again.",
+        )
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="resumeiq-{session_id}.pdf"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="resumeiq-{session_id}.pdf"',
+            "X-ResumeIQ-Render-Mode": render_mode,
+            "X-ResumeIQ-Template-Id": tid,
+        },
     )

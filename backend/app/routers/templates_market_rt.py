@@ -1,4 +1,5 @@
 from html import escape
+from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -8,10 +9,12 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.database import get_session
 from app.deps import CurrentUser
 from app.models_db import Resume
-from app.schemas import TemplateMeta
+from app.schemas import TemplateImportWebIn, TemplateMeta
+from app.services.template_catalog import list_active_template_catalog, sync_template_catalog
 from app.services.resume_template_engine import template_preview_context
-from app.services.template_catalog import list_active_template_catalog
+from app.services.template_preview_serve import build_template_preview_response, template_preview_url_path
 from app.services.template_registry import get_template_descriptor, is_supported_template_id
+from app.services.template_web_import import import_latex_template_from_web
 
 router = APIRouter(prefix="/api/v1/templates", tags=["templates"])
 
@@ -255,22 +258,79 @@ def _render_template_preview_html(template_id: str, data: dict[str, Any] | None)
 
 @router.get("", response_model=list[TemplateMeta])
 async def list_templates(session: Annotated[AsyncSession, Depends(get_session)]):
-    rows = await list_active_template_catalog(session)
+    """Active ATS templates. Always syncs from disk so zip templates stay current."""
+    from app.services.template_registry import list_resume_templates
+
+    rows = await sync_template_catalog(session)
+    if not rows:
+        rows = await list_active_template_catalog(session)
+    if rows:
+        return [
+            TemplateMeta(
+                id=row.id,
+                name=row.name,
+                style=row.style,
+                best_for=row.best_for,
+                ats_score=row.ats_score,
+                kind=row.kind,
+                source=row.source,
+                description=row.description,
+                preview_variant=row.preview_variant,
+                file_name=Path(row.entry_path).name if row.entry_path else None,
+                preview_url=template_preview_url_path(row.id),
+            )
+            for row in rows
+        ]
     return [
         TemplateMeta(
-            id=row.id,
-            name=row.name,
-            style=row.style,
-            best_for=row.best_for,
-            ats_score=row.ats_score,
-            kind=row.kind,
-            source=row.source,
-            description=row.description,
-            preview_variant=row.preview_variant,
-            file_name=row.entry_path.split("\\")[-1] if row.entry_path else None,
+            id=desc.id,
+            name=desc.name,
+            style=desc.style,
+            best_for=desc.best_for or desc.description,
+            ats_score=desc.ats_score,
+            kind=desc.kind,
+            source=desc.source,
+            description=desc.description,
+            preview_variant=desc.preview_variant,
+            file_name=desc.file_name,
+            preview_url=template_preview_url_path(desc.id),
         )
-        for row in rows
+        for desc in list_resume_templates()
     ]
+
+
+@router.post("/import-web", response_model=TemplateMeta)
+async def import_template_from_web(
+    body: TemplateImportWebIn,
+    user: CurrentUser,
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    """Import a remote .tex template URL into the local catalog."""
+    template_id = import_latex_template_from_web(body.url, body.name)
+    await sync_template_catalog(session)
+    rows = await list_active_template_catalog(session)
+    for row in rows:
+        if row.id == template_id:
+            return TemplateMeta(
+                id=row.id,
+                name=row.name,
+                style=row.style,
+                best_for=row.best_for,
+                ats_score=row.ats_score,
+                kind=row.kind,
+                source=row.source,
+                description=row.description,
+                preview_variant=row.preview_variant,
+                file_name=Path(row.entry_path).name if row.entry_path else None,
+                preview_url=template_preview_url_path(row.id),
+            )
+    raise HTTPException(500, "Template imported but catalog sync failed")
+
+
+@router.get("/{template_id}/preview", include_in_schema=False)
+async def template_preview_image(template_id: str):
+    """Thumbnail for template cards (PNG from folder, bundled SVG, or generated placeholder)."""
+    return build_template_preview_response(template_id)
 
 
 @router.get("/{template_id}/preview-html", response_class=HTMLResponse)

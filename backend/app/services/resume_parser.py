@@ -6,7 +6,6 @@ from typing import Any
 from docx import Document as DocxDocument
 from pypdf import PdfReader
 
-from app.config import settings
 from app.schemas import (
     ContactBlock,
     EducationItem,
@@ -875,9 +874,8 @@ def contact_location_fallback(parsed: dict[str, Any], cleaned_text: str) -> None
 
 
 async def llm_parse_resume(cleaned_text: str) -> dict[str, Any]:
-    from openai import AsyncOpenAI
+    from app.services.llm_client import chat_json
 
-    client = AsyncOpenAI(api_key=settings.openai_api_key)
     schema = ResumeSchema.model_json_schema()
     system = (
         "You convert raw resume text into JSON for ResumeSchema. "
@@ -892,17 +890,14 @@ async def llm_parse_resume(cleaned_text: str) -> dict[str, Any]:
         "experience: real company names and titles when stated; otherwise use '—' for company and put bullets under one role."
     )
     user_text = cleaned_text[:14_000]
-    resp = await client.chat.completions.create(
-        model=settings.openai_parse_model,
-        messages=[
+    data = await chat_json(
+        [
             {"role": "system", "content": system + f"\nTop-level keys: {list(schema.get('properties', {}).keys())}"},
             {"role": "user", "content": user_text},
         ],
-        response_format={"type": "json_object"},
         temperature=0.1,
+        max_tokens=8192,
     )
-    text = resp.choices[0].message.content or "{}"
-    data = json.loads(text)
     resume = ResumeSchema.model_validate(data)
     dumped = resume.model_dump()
     _enrich_contact_from_text(dumped, cleaned_text)
@@ -920,19 +915,24 @@ def _extract_bytes_to_text(filename: str, data: bytes) -> str:
     return parse_txt(data)
 
 
-async def parse_upload(filename: str, data: bytes) -> dict[str, Any]:
+async def parse_upload(filename: str, data: bytes, *, use_llm: bool = False) -> dict[str, Any]:
+    """
+    Parse an uploaded resume into structured JSON.
+    ``use_llm=False`` (default for /upload) keeps onboarding fast; AI enhance can run later.
+    """
+    from app.services.llm_client import llm_configured
     from app.services.resume_finalize import finalize_resume
 
     raw = _extract_bytes_to_text(filename, data)
     cleaned = clean_resume_text(raw)
     draft = heuristic_resume_structure(raw)
-    if settings.openai_api_key:
+    if use_llm and llm_configured():
         try:
             parsed = await llm_parse_resume(cleaned)
         except Exception:
             parsed = draft
-        out = await finalize_resume(parsed, cleaned)
+        out = await finalize_resume(parsed, cleaned, use_llm=True)
     else:
-        out = await finalize_resume(draft, cleaned)
+        out = await finalize_resume(draft, cleaned, use_llm=False)
     out["_resumeiq_cleaned"] = cleaned[:32_000]
     return out

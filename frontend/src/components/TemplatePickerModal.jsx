@@ -107,7 +107,7 @@ export default function TemplatePickerModal({
                         className={`rounded-xl px-3 py-2 text-xs font-semibold transition ${
                           isSelected
                             ? "border border-emerald-500/25 bg-emerald-500/15 text-emerald-100"
-                            : "bg-gradient-to-r from-cyan-500 to-indigo-600 text-white shadow-lg shadow-cyan-950/30 hover:brightness-110"
+                            : "bg-gradient-to-r from-cyan-500 to-teal-600 text-white shadow-lg shadow-cyan-950/30 hover:brightness-110"
                         } disabled:opacity-50`}
                       >
                         {saving && isPreview ? "Saving..." : isSelected ? "Selected" : "Use template"}

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
-from app.services.template_registry import folder_template_structure_path
+from app.services.template_registry import folder_template_structure_path, get_template_descriptor
 
 
 def _tex_escape(value: Any) -> str:
@@ -38,11 +39,32 @@ def _best_headline(resume_json: dict[str, Any]) -> str:
     return "Professional Resume"
 
 
-def _structure_tex(template_id: str) -> str:
+_DOCCLASS_MARKER_RE = re.compile(r"^\s*%\s*resumeiq:documentclass=([^|]+)\|(.+)\s*$", re.I)
+
+
+def _structure_parts(template_id: str) -> tuple[str, str]:
+    """Return (docclass_spec, structure_tex_without_docclass)."""
     path = folder_template_structure_path(template_id)
+    default_doc = "[a4paper,12pt]{memoir}"
     if path and path.is_file():
-        return path.read_text(encoding="utf-8", errors="replace").strip()
-    return r"""
+        raw = path.read_text(encoding="utf-8", errors="replace")
+        doc_spec = default_doc
+        lines = raw.splitlines()
+        if lines:
+            marker = _DOCCLASS_MARKER_RE.match(lines[0])
+            if marker:
+                cls = marker.group(1).strip()
+                opts = marker.group(2).strip()
+                if cls:
+                    doc_spec = f"[{opts}]{{{cls}}}" if opts else f"{{{cls}}}"
+                raw = "\n".join(lines[1:])
+
+        begin_match = re.search(r"\\begin\s*\{\s*document\s*\}", raw, re.I)
+        structure = raw[: begin_match.start()] if begin_match else raw
+        structure = re.sub(r"\\documentclass(?:\[[^\]]*\])?\{[^}]+\}", "", structure, count=1, flags=re.I).strip()
+        return doc_spec, structure
+
+    return default_doc, r"""
 \usepackage{XCharter}
 \usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
@@ -175,7 +197,154 @@ def _skills_section(resume_json: dict[str, Any]) -> str:
     return "\n".join(parts)
 
 
+def _web_contact_lines(resume_json: dict[str, Any]) -> str:
+    contact = resume_json.get("contact") or {}
+    location = _tex_escape(contact.get("location") or "")
+    phone = _tex_escape(contact.get("phone") or "")
+    email = _tex_escape(contact.get("email") or "")
+    linkedin = _tex_escape(contact.get("linkedin") or "")
+    github = _tex_escape(contact.get("github") or "")
+    lines: list[str] = []
+    for item in (location, phone, email, linkedin, github):
+        if item:
+            lines.append(item)
+    return " \\\\\n".join(lines)
+
+
+def _web_experience_block(resume_json: dict[str, Any]) -> str:
+    chunks: list[str] = []
+    for row in (resume_json.get("experience") or [])[:6]:
+        if not isinstance(row, dict):
+            continue
+        title = _tex_escape(row.get("title") or "Role")
+        company = _tex_escape(row.get("company") or "")
+        sd = _tex_escape(row.get("start_date") or "")
+        ed = _tex_escape(row.get("end_date") or "Present")
+        span = f"{sd} - {ed}".strip(" -")
+        bullets = row.get("bullets") or row.get("description") or []
+        if not isinstance(bullets, list):
+            bullets = [bullets]
+        bullet_lines = [str(item).strip() for item in bullets if str(item).strip()][:8]
+        heading = f"{company} - {title}" if company else title
+        items = "\n".join(f"    \\item {_tex_escape(line)}" for line in bullet_lines) or "    \\item Impact and responsibilities."
+        chunks.append(
+            "\n".join(
+                [
+                    f"\\textbf{{\\uppercase{{{_tex_escape(span or 'Experience')}}}}} \\\\",
+                    f"\\textbf{{{heading}}}",
+                    "\\begin{itemize}",
+                    items,
+                    "\\end{itemize}",
+                    "",
+                ]
+            )
+        )
+    if not chunks:
+        return "\\textit{Add experience in the resume editor.}\n"
+    return "\n".join(chunks)
+
+
+def _web_education_block(resume_json: dict[str, Any]) -> str:
+    rows: list[str] = []
+    for row in (resume_json.get("education") or [])[:4]:
+        if not isinstance(row, dict):
+            continue
+        degree = _tex_escape(row.get("degree") or "")
+        field = _tex_escape(row.get("field") or "")
+        school = _tex_escape(row.get("institution") or "")
+        year = _tex_escape(row.get("year") or "")
+        if field and field.lower() not in degree.lower():
+            degree = f"{degree} in {field}" if degree else field
+        line = f"\\textbf{{\\uppercase{{{year or 'Education'}}}}} \\\\ \\textbf{{{school} - {degree or 'Program'}}} \\\\"
+        rows.append(line)
+    if not rows:
+        return "\\textit{Add education in the resume editor.}\n"
+    return "\n".join(rows)
+
+
+def _web_skills_block(resume_json: dict[str, Any]) -> str:
+    skills = resume_json.get("skills") or {}
+    technical = [str(x).strip() for x in (skills.get("technical") or []) if str(x).strip()]
+    languages = [str(x).strip() for x in (resume_json.get("languages") or []) if str(x).strip()]
+    certs = [str(x).strip() for x in (skills.get("certifications") or []) if str(x).strip()]
+    merged = technical[:14]
+    if languages:
+        merged.append("Languages: " + ", ".join(languages[:4]))
+    if certs:
+        merged.append("Certifications: " + ", ".join(certs[:4]))
+    if not merged:
+        merged = ["Add skills in the resume editor."]
+    items = "\n".join(f"    \\item {_tex_escape(item)}" for item in merged)
+    return "\\begin{itemize}\n" + items + "\n\\end{itemize}\n"
+
+
+def _render_web_template_latex(
+    template_id: str,
+    resume_json: dict[str, Any],
+    docclass_spec: str,
+    structure_tex: str,
+) -> str:
+    contact = resume_json.get("contact") or {}
+    name = _tex_escape(contact.get("name") or "Candidate Name")
+    summary = _tex_escape(resume_json.get("summary") or "Add a professional summary in the resume editor.")
+    contact_lines = _web_contact_lines(resume_json)
+    experience = _web_experience_block(resume_json)
+    education = _web_education_block(resume_json)
+    skills = _web_skills_block(resume_json)
+    desc = get_template_descriptor(template_id)
+    title_name = _tex_escape(desc.name if desc else "Web LaTeX Template")
+    from app.services.accent_colors import accent_from_resume, accent_rgb_tuple
+
+    hex6 = accent_from_resume(resume_json, fallback="eb5757")
+    r, g, b = accent_rgb_tuple(hex6)
+    accent_block = (
+        f"\\providecolor{{coral}}{{RGB}}{{{r},{g},{b}}}\n"
+        f"\\definecolor{{accent}}{{HTML}}{{{hex6}}}\n"
+    )
+
+    return (
+        "\\documentclass"
+        + docclass_spec
+        + "\n\n"
+        + structure_tex
+        + "\n\n"
+        + "\\providecommand{\\headingfont}{}\n"
+        + accent_block
+        + "\n\\begin{document}\n\n"
+        + "{\\headingfont\\color{accent} \\Huge \\textbf{Hello}}\\\\[-0.2em]\n"
+        + "{\\headingfont\\LARGE \\textbf{I'm "
+        + name
+        + "}}\\\\[1em]\n"
+        + (contact_lines + " \\\\[1em]\n" if contact_lines else "")
+        + "\\section*{Professional Summary}\n"
+        + summary
+        + "\n\n"
+        + "\\section*{Professional Experience}\n\n"
+        + experience
+        + "\n"
+        + "\\section*{Education}\n"
+        + education
+        + "\n\n"
+        + "\\section*{Skills}\n"
+        + skills
+        + "\n\\vfill\n\\small Imported template style: "
+        + title_name
+        + "\n"
+        + "\\end{document}\n"
+    )
+
+
 def render_folder_template_latex(template_id: str, resume_json: dict[str, Any]) -> str:
+    desc = get_template_descriptor(template_id)
+    if desc and desc.source == "zip" and desc.entry_path:
+        from app.services.packaged_templates import render_zip_packaged_latex
+
+        return render_zip_packaged_latex(desc.entry_path, resume_json)
+
+    docclass_spec, structure_tex = _structure_parts(template_id)
+    if desc and desc.source == "web":
+        return _render_web_template_latex(template_id, resume_json, docclass_spec, structure_tex)
+
     contact = resume_json.get("contact") or {}
     name = _tex_escape(contact.get("name") or "Candidate Name")
     email = _url_escape(contact.get("email") or "")
@@ -207,8 +376,10 @@ def render_folder_template_latex(template_id: str, resume_json: dict[str, Any]) 
     projects = _projects_section(resume_json)
 
     return (
-        "\\documentclass[a4paper,12pt]{memoir}\n\n"
-        + _structure_tex(template_id)
+        "\\documentclass"
+        + docclass_spec
+        + "\n\n"
+        + structure_tex
         + "\n\n"
         + "\\userinformation{\n"
         + sidebar

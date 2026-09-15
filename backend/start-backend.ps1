@@ -5,7 +5,7 @@
 # If port 8000 fails with WinError 10013 (common on Windows when the port sits in an excluded range),
 # this script tries fallbacks and prints the URL to use for VITE_API_URL.
 param(
-    [int] $Port = 8000
+    [int] $Port = 8765
 )
 
 $ErrorActionPreference = "Stop"
@@ -37,7 +37,7 @@ if ($owningPid -and $owningPid -match '^\d+$') {
     Start-Sleep -Milliseconds 400
 }
 
-$candidates = @($Port) + @(8010, 8020, 8765, 9000) | ForEach-Object { [int]$_ } | Select-Object -Unique
+$candidates = @($Port) + @(8000, 8020, 8765, 9000) | ForEach-Object { [int]$_ } | Select-Object -Unique
 $chosen = $null
 foreach ($p in $candidates) {
     if (Test-CanBind $p) {

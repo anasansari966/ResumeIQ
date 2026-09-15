@@ -1,6 +1,6 @@
-"""Live job listings via JobSpy (LinkedIn + Indeed by default; optional boards via config).
+"""Live jobs from multiple JobSpy platforms plus company/ATS career pages.
 
-Scraped jobs are optionally short-listed by an LLM against the full resume (experience, education, skills).
+Scraped jobs are optionally short-listed by an LLM against resume experience, skills, and role fit.
 Monster is not supported by JobSpy.
 """
 from __future__ import annotations
@@ -18,7 +18,10 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.config import settings
 from app.schemas import JobOut
 from app.models_db import JobListing
-from app.services.job_match_preference import combined_preference_score, skills_from_jsearch_item
+from app.services.job_eligibility import analyze_job_eligibility
+from app.services.job_description_clean import clean_job_description
+from app.services.job_match_preference import skills_from_jsearch_item
+from app.services.job_page_enrich import fetch_description_from_apply_url
 from app.services.job_query_ai import suggest_jsearch_queries
 from app.services.jsearch_pipeline import (
     ISO2_QUERY_LABEL,
@@ -35,8 +38,17 @@ from app.services.job_shortlist_ai import shortlist_jobs_with_llm
 log = logging.getLogger(__name__)
 
 # Google Jobs often surfaces roles hosted on employer / ATS career pages (Greenhouse, Lever, etc.).
-_BOARDS_DEFAULT: tuple[str, ...] = ("linkedin", "indeed", "google")
-_ALLOWED_BOARDS = frozenset({"linkedin", "indeed", "zip_recruiter", "google", "bayt", "bdjobs"})
+_BOARDS_DEFAULT: tuple[str, ...] = ("linkedin", "indeed", "glassdoor", "google")
+_ALLOWED_BOARDS = frozenset({"linkedin", "indeed", "glassdoor", "zip_recruiter", "google", "bayt", "bdjobs"})
+_BOARD_LABELS = {
+    "linkedin": "LinkedIn",
+    "indeed": "Indeed",
+    "glassdoor": "Glassdoor",
+    "zip_recruiter": "ZipRecruiter",
+    "google": "Google Jobs",
+    "bayt": "Bayt",
+    "bdjobs": "BDJobs",
+}
 
 _INDEED_COUNTRY: dict[str, str] = {
     "us": "USA",
@@ -70,6 +82,10 @@ def _parse_boards_setting() -> tuple[str, ...]:
     parts = [p.strip().lower() for p in re.split(r"[,\s]+", raw) if p.strip()]
     out = [p for p in parts if p in _ALLOWED_BOARDS]
     return tuple(out) if out else _BOARDS_DEFAULT
+
+
+def _boards_label(boards: tuple[str, ...]) -> str:
+    return " · ".join(_BOARD_LABELS.get(board, board.replace("_", " ").title()) for board in boards)
 
 
 def _jobspy_scrape_location(qcountry: str) -> str:
@@ -302,6 +318,7 @@ async def smart_jobspy_fetch(
     date_posted: str,
     page: int,
     num_pages: int,
+    location_override: str = "",
 ) -> tuple[list[JobOut], list[str], str, int | None, str, list[str]]:
     """
     Returns (jobs, queries_used, message, inferred_experience_years, experience_phrase, suggested_roles).
@@ -319,7 +336,7 @@ async def smart_jobspy_fetch(
     scrape_location = _jobspy_scrape_location(qcountry)
     indeed_country = _indeed_country_label(qcountry)
     boards = _parse_boards_setting()
-    boards_label = " · ".join(b.title() for b in boards)
+    boards_label = _boards_label(boards)
 
     if manual_query.strip():
         base_manual = manual_query.strip()
@@ -352,6 +369,26 @@ async def smart_jobspy_fetch(
                 f"each title is searched with your skills."
             )
 
+    if not country_locked:
+        planned_country = str(plan.get("country") or "").strip().lower()[:2]
+        if planned_country:
+            qcountry = planned_country
+    planned_location = str(plan.get("location_phrase") or "").strip()
+    scrape_location = (location_override or "").strip() or planned_location or _jobspy_scrape_location(qcountry)
+    indeed_country = _indeed_country_label(qcountry)
+    if manual_query.strip():
+        msg = f"Manual job search in {scrape_location}, filtered against the selected resume."
+    elif years is not None:
+        msg = (
+            f"Resume-based role search in {scrape_location} using approximately {years} years of experience. "
+            "Each listing is checked against experience, role alignment, and skills."
+        )
+    else:
+        msg = (
+            f"Resume-based role search in {scrape_location}. "
+            "Each listing is checked against role alignment and skills."
+        )
+
     wtype = (work_type or "all").strip().lower()
     if wtype not in {"all", "remote", "on-site"}:
         wtype = "all"
@@ -368,6 +405,9 @@ async def smart_jobspy_fetch(
     # One combined JobSpy call per manual text; resume-driven search fans out across many AI/heuristic roles.
     if manual_query.strip():
         max_q = 1
+    else:
+        # Only expose generated roles that are actually sent to the job platforms.
+        suggested_roles = suggested_roles[:max_q]
     per_q = max(5, min(60, int(settings.linkedin_jobspy_results_per_query)))
     results_cap = min(120, per_q * max(1, int(num_pages or 1)))
     _ = page
@@ -484,18 +524,53 @@ async def smart_jobspy_fetch(
 
     await session.commit()
 
+    # Job-board rows usually contain a full JD. Career/ATS search hits and some
+    # board rows contain only a snippet; load those pages before eligibility so
+    # required experience is compared against the resume, not against a teaser.
+    enrich_candidates = [
+        row
+        for _, row in merged
+        if row.apply_url
+        and (
+            row.source == "serpapi_web"
+            or len((row.description or "").strip()) < 450
+        )
+    ][:18]
+    if enrich_candidates:
+        semaphore = asyncio.Semaphore(4)
+
+        async def _load_full_jd(row: JobListing) -> tuple[JobListing, str]:
+            async with semaphore:
+                try:
+                    raw = await fetch_description_from_apply_url(row.apply_url or "")
+                    return row, clean_job_description(raw)[:50_000]
+                except Exception as exc:
+                    log.info("Could not enrich JD for job %s: %s", row.id, exc)
+                    return row, ""
+
+        enriched = await asyncio.gather(*[_load_full_jd(row) for row in enrich_candidates])
+        changed = False
+        for row, full_jd in enriched:
+            if full_jd and len(full_jd) > len((row.description or "").strip()):
+                row.description = full_jd
+                session.add(row)
+                changed = True
+        if changed:
+            await session.commit()
+
     out: list[JobOut] = []
     for item, row in merged:
         await session.refresh(row)
         desc_clean = str(row.description or "")
         skills = row.skills or skills_from_jsearch_item({**item, "job_description": desc_clean})
-        score, matching, missing = combined_preference_score(
-            skills,
-            desc_clean,
-            str(row.title or item.get("job_title") or ""),
-            resume_json,
-            None,
+        analysis = analyze_job_eligibility(
+            title=str(row.title or item.get("job_title") or ""),
+            description=desc_clean,
+            job_skills=skills,
+            resume_json=resume_json,
         )
+        if resume_json and not analysis.eligible:
+            continue
         out.append(
             JobOut(
                 id=row.id,
@@ -510,9 +585,14 @@ async def smart_jobspy_fetch(
                 skills=row.skills or skills,
                 posted_at=row.posted_at,
                 apply_url=row.apply_url,
-                match_score=score,
-                matching_skills=matching,
-                missing_skills=missing,
+                match_score=analysis.score,
+                matching_skills=analysis.matching_skills,
+                missing_skills=analysis.missing_skills,
+                fit_rationale=analysis.rationale,
+                is_eligible=analysis.eligible if resume_json else None,
+                eligibility_reasons=analysis.reasons,
+                candidate_experience_years=analysis.candidate_years,
+                required_experience_years=analysis.required_years,
             )
         )
 
@@ -533,6 +613,13 @@ async def smart_jobspy_fetch(
         except Exception as e:
             log.warning("Job shortlist step skipped: %s", e)
 
+    if resume_json:
+        source_count = len({job.source for job in out if job.source})
+        msg = (
+            f"{msg} Compared resume experience with each extracted job description. "
+            f"{len(out)} eligible match{'es' if len(out) != 1 else ''} from "
+            f"{source_count} platform{'s' if source_count != 1 else ''} shown."
+        )
     return out, queries_used, msg, years, phrase, suggested_roles
 
 

@@ -1,11 +1,10 @@
-"""LLM filters scraped jobs to a preferred shortlist vs. full resume context."""
+"""LLM filters scraped jobs using resume skills, experience, and role fit."""
 from __future__ import annotations
 
 import json
 import logging
 from typing import Any
 
-from app.config import settings
 from app.schemas import JobOut
 from app.services.job_query_ai import _resume_brief
 
@@ -20,14 +19,17 @@ async def shortlist_jobs_with_llm(
     result_max: int,
 ) -> tuple[list[JobOut], str]:
     """
-    Return jobs marked as strong fits (experience, education, skills, seniority).
+    Return jobs marked as strong fits (experience, skills, role, and seniority).
     If OpenAI is unavailable or parsing fails, returns the first ``result_max`` heuristic-sorted jobs.
     """
+    from app.services.llm_client import chat_json, llm_configured
+
     if not jobs:
         return [], ""
 
-    if not (settings.openai_api_key or "").strip():
-        return jobs, ""
+    if not llm_configured():
+        ranked = sorted(jobs, key=lambda j: (j.match_score or 0), reverse=True)
+        return ranked[:result_max], f"Eligibility shortlist: top {min(len(ranked), result_max)} matching role(s)."
 
     brief = _resume_brief(resume_json or {})
     if not (brief.get("roles") or brief.get("headline_summary") or brief.get("technical_skills")):
@@ -36,9 +38,6 @@ async def shortlist_jobs_with_llm(
     ranked = sorted(jobs, key=lambda j: (j.match_score or 0), reverse=True)
     pool = ranked[: max(1, min(pool_max, len(ranked)))]
 
-    from openai import AsyncOpenAI
-
-    client = AsyncOpenAI(api_key=settings.openai_api_key)
     job_rows = []
     for j in pool:
         desc = (j.description or "").strip().replace("\n", " ")
@@ -67,8 +66,9 @@ async def shortlist_jobs_with_llm(
         f"The model has candidate field estimated_years_experience={yrs!r} (None or 0 often means fresher/intern). "
         "If the candidate is a fresher or has ~0–1 years and the JD clearly expects 2+ or mid/senior level, set keep false "
         "unless the JD explicitly welcomes fresh graduates, interns, or 'training provided'. "
-        "Also exclude wrong education level (e.g. PhD required vs no degree). "
-        "Wrong domain or title seniority (Director vs junior) → keep false. Borderline → keep false."
+        "Compare skills and role/domain alignment carefully. "
+        "Wrong domain or title seniority (Director vs junior) → keep false. Borderline → keep false. "
+        "Do not use education or degree requirements when deciding keep or fit_score."
     )
     user_obj = {
         "candidate": brief,
@@ -78,15 +78,11 @@ async def shortlist_jobs_with_llm(
     user_msg = json.dumps(user_obj, ensure_ascii=False)
 
     try:
-        resp = await client.chat.completions.create(
-            model=settings.openai_parse_model,
-            messages=[{"role": "system", "content": sys_msg}, {"role": "user", "content": user_msg}],
-            response_format={"type": "json_object"},
+        data = await chat_json(
+            [{"role": "system", "content": sys_msg}, {"role": "user", "content": user_msg}],
             temperature=0.2,
             max_tokens=1600,
         )
-        raw = (resp.choices[0].message.content or "{}").strip()
-        data = json.loads(raw)
         items = data.get("items")
         if not isinstance(items, list):
             raise ValueError("missing items array")

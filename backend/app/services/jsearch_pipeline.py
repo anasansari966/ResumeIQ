@@ -412,7 +412,7 @@ async def smart_jsearch_fetch(
         else:
             msg = "Role-based Google Jobs (SerpAPI) queries from your resume."
         if qplan_src == "openai":
-            msg = f"{msg} Role titles from OpenAI ({settings.openai_parse_model})."
+            msg = f"{msg} Role titles from OpenAI ({settings.openai_model})."
         elif qplan_src in ("heuristic_llm_error", "heuristic_empty_llm_queries"):
             msg = f"{msg} OpenAI title suggestion unavailable; using built-in templates."
         elif qplan_src == "heuristic" and not (settings.openai_api_key or "").strip():

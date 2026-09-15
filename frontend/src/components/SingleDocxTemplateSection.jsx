@@ -26,7 +26,7 @@ export default function SingleDocxTemplateSection({ template, resumeId, loading 
   return (
     <div className="space-y-3">
       <div className="rounded-xl bg-slate-950/50 border border-white/10 px-4 py-3 flex flex-wrap items-center gap-2">
-        <span className="text-[9px] font-semibold bg-gradient-to-r from-violet-600 to-indigo-600 text-white px-2 py-0.5 rounded">
+        <span className="text-[9px] font-semibold bg-gradient-to-r from-violet-600 to-teal-600 text-white px-2 py-0.5 rounded">
           {kindLabel}
         </span>
         <span className="text-sm font-semibold text-white">{title}</span>

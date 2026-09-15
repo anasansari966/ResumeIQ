@@ -106,4 +106,10 @@ async def reset_password(body: ResetPasswordIn, session: Annotated[AsyncSession,
 
 @router.get("/me", response_model=UserPublic)
 async def me(user: CurrentUser):
-    return UserPublic(id=user.id, email=user.email, name=user.name, plan=user.plan)
+    return UserPublic(
+        id=user.id,
+        email=user.email,
+        name=user.name,
+        plan=user.plan,
+        role=getattr(user, "role", None) or "user",
+    )

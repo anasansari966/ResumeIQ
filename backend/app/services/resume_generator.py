@@ -2,7 +2,6 @@ import json
 import re
 from typing import Any, AsyncIterator
 
-from app.config import settings
 from app.schemas import ResumeSchema
 from app.services.resume_salvage import strip_resume_internal_keys
 
@@ -54,13 +53,12 @@ def _mock_tailor(parsed_resume: dict[str, Any], jd_analysis: dict[str, Any]) -> 
 async def generate_tailored_resume(
     parsed_resume: dict[str, Any], jd_analysis: dict[str, Any], raw_jd: str
 ) -> dict[str, Any]:
+    from app.services.llm_client import chat_json, llm_configured
+
     parsed_resume = strip_resume_internal_keys(parsed_resume)
-    if not settings.openai_api_key:
+    if not llm_configured():
         return _mock_tailor(parsed_resume, jd_analysis)
     try:
-        from openai import AsyncOpenAI
-
-        client = AsyncOpenAI(api_key=settings.openai_api_key)
         schema_hint = ResumeSchema.model_json_schema()
         kws = jd_analysis.get("must_have_keywords") or jd_analysis.get("keywords") or []
         kw_preview = ", ".join(str(x).strip() for x in kws[:18] if str(x).strip())
@@ -79,9 +77,8 @@ async def generate_tailored_resume(
             "jd_analysis": jd_analysis,
             "job_description_excerpt": raw_jd[:6000],
         }
-        resp = await client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
+        data = await chat_json(
+            [
                 {"role": "system", "content": system},
                 {
                     "role": "user",
@@ -89,11 +86,9 @@ async def generate_tailored_resume(
                     + f"\n\nSchema keys: {list(schema_hint.get('properties', {}).keys())}",
                 },
             ],
-            response_format={"type": "json_object"},
             temperature=0.4,
+            max_tokens=8192,
         )
-        text = resp.choices[0].message.content or "{}"
-        data = json.loads(text)
         validated = ResumeSchema.model_validate(data)
         return validated.model_dump()
     except Exception:
@@ -103,33 +98,29 @@ async def generate_tailored_resume(
 async def stream_tailored_resume_tokens(
     parsed_resume: dict[str, Any], jd_analysis: dict[str, Any], raw_jd: str
 ) -> AsyncIterator[str]:
+    from app.services.llm_client import chat_stream, llm_configured
+
     parsed_resume = strip_resume_internal_keys(parsed_resume)
-    if not settings.openai_api_key:
+    if not llm_configured():
         payload = json.dumps(_mock_tailor(parsed_resume, jd_analysis))
         chunk = max(48, len(payload) // 20)
         for i in range(0, len(payload), chunk):
             yield payload[i : i + chunk]
         return
     try:
-        from openai import AsyncOpenAI
-
-        client = AsyncOpenAI(api_key=settings.openai_api_key)
         system = (
             "Return ONLY JSON for ResumeSchema. No markdown. No fabrication. "
             "Real experience only from candidate_resume."
         )
         user_payload = json.dumps({"candidate_resume": parsed_resume, "jd_analysis": jd_analysis, "jd": raw_jd[:6000]})
-        stream = await client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
+        async for piece in chat_stream(
+            [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user_payload},
             ],
-            stream=True,
             temperature=0.4,
-        )
-        async for event in stream:
-            piece = event.choices[0].delta.content
+            max_tokens=8192,
+        ):
             if piece:
                 yield piece
     except Exception:

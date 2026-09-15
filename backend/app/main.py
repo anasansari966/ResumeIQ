@@ -28,6 +28,7 @@ from app.routers import resumes as resumes_rt
 from app.routers import tailor as tailor_rt
 from app.routers import templates_market_rt
 from app.services.job_seeds import seed_jobs
+from app.services.seed_users import seed_demo_users
 from app.services.template_catalog import sync_template_catalog
 
 
@@ -45,11 +46,17 @@ async def seed_template_catalog():
         await sync_template_catalog(session)
 
 
+async def seed_accounts():
+    async with async_session_factory() as session:
+        await seed_demo_users(session)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
     await seed_job_listings()
     await seed_template_catalog()
+    await seed_accounts()
     yield
     await engine.dispose()
 
@@ -120,3 +127,40 @@ _mount_resumeiq_ui(app)
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/health/llm")
+async def health_llm():
+    from app.services.llm_client import chat_complete, llm_configured, llm_key_diagnosis, openai_base_url
+    from app.config import settings
+
+    diag = llm_key_diagnosis()
+    if not llm_configured() or not diag.get("ok"):
+        return {
+            "status": "unconfigured" if not llm_configured() else "misconfigured",
+            "model": settings.openai_model,
+            "base_url": openai_base_url(),
+            "diagnosis": diag,
+        }
+    try:
+        text = await chat_complete(
+            [{"role": "user", "content": 'Reply with exactly: {"ok":true}'}],
+            temperature=0,
+            max_tokens=256,
+            json_mode=True,
+        )
+        return {
+            "status": "ok",
+            "model": settings.openai_model,
+            "base_url": openai_base_url(),
+            "sample": (text or "")[:120],
+            "diagnosis": diag,
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "status": "error",
+            "model": settings.openai_model,
+            "base_url": openai_base_url(),
+            "detail": str(exc)[:400],
+            "diagnosis": diag,
+        }

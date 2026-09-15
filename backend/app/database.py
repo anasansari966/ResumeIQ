@@ -42,6 +42,8 @@ def _run_legacy_migrations(sync_conn) -> None:
             sync_conn.execute(text(f"ALTER TABLE {user_table} ADD COLUMN email_verified BOOLEAN DEFAULT 0"))
         if "plan" not in cols:
             sync_conn.execute(text(f"ALTER TABLE {user_table} ADD COLUMN plan {varchar_255} DEFAULT 'free'"))
+        if "role" not in cols:
+            sync_conn.execute(text(f"ALTER TABLE {user_table} ADD COLUMN role {varchar_255} DEFAULT 'user'"))
     if "resume" in tables:
         cols = {c["name"] for c in insp.get_columns("resume")}
         if "active_template_id" not in cols:

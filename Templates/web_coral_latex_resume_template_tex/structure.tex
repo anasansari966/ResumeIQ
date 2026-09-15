@@ -1,0 +1,41 @@
+% resumeiq:documentclass=article|11pt
+
+\usepackage[a4paper,margin=1in]{geometry}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{titlesec}
+\usepackage{parskip}
+\usepackage{multicol}
+\usepackage{hyperref}
+\usepackage{fontspec}  % Required for custom fonts
+
+% Font setup
+\setmainfont{Lato}  % Body font
+\newfontfamily\headingfont{Playfair Display}  % Header font
+
+% Define coral color
+\definecolor{coral}{RGB}{235,87,87}
+
+% Section title style
+\titleformat{\section}
+  {\headingfont\color{coral}\bfseries\Large}
+  {}
+  {0em}
+  {}
+
+\titleformat{\subsection}[runin]{\bfseries\itshape}{}{0em}{}
+
+\setlist[itemize]{leftmargin=1.5em, itemsep=0.5em}
+
+\usepackage{xcolor}
+\usepackage{enumitem}
+\setlist{noitemsep,nolistsep}
+\providecommand{\userinformation}[1]{\renewcommand{\userinformation}{#1}}
+\providecommand{\cvheading}[1]{{\Huge\bfseries #1}\par\vspace{.6\baselineskip}}
+\providecommand{\cvsubheading}[1]{{\Large\bfseries #1}\bigbreak}
+\providecommand{\Sep}{\vspace{1em}}
+\providecommand{\SmallSep}{\vspace{0.5em}}
+\providecommand{\aboutme}[2]{\textbf{#1}~~#2\par\Sep}
+\providecommand{\CVSection}[1]{{\Large\textbf{#1}}\par\SmallSep}
+\providecommand{\CVItem}[2]{\textbf{#1}\par#2\SmallSep}
+\providecommand{\bluebullet}{\textbullet~~}

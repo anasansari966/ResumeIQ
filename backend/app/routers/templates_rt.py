@@ -19,16 +19,18 @@ async def list_templates():
     """Only supported templates: Template 1 and Template 2 (LaTeX)."""
     return [
         TemplateMeta(
-            id=tid,
-            name=name,
-            style="LaTeX",
-            best_for="AI-editable resume layout",
-            ats_score=96,
-            kind=kind,
-            source="builtin",
-            file_name=None,
+            id=desc.id,
+            name=desc.name,
+            style=desc.style,
+            best_for=desc.best_for or desc.description,
+            ats_score=desc.ats_score,
+            kind=desc.kind,
+            source=desc.source,
+            description=desc.description,
+            preview_variant=desc.preview_variant,
+            file_name=desc.file_name,
         )
-        for tid, name, kind in list_resume_templates()
+        for desc in list_resume_templates()
     ]
 
 

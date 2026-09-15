@@ -3,8 +3,10 @@ function inferVariant(template, templateId) {
   if (variant) return variant;
 
   const source = `${template?.name || ""} ${templateId || ""}`.toLowerCase();
+  if (source.includes("chicago") || source.includes("sidebar")) return "sidebar-classic";
+  if (source.includes("milano") || source.includes("coral")) return "milano";
   if (source.includes("folder_") || source.includes("template1") || source.includes("classic")) {
-    return "sidebar-classic";
+    return source.includes("classic") && !source.includes("chicago") ? "minimal" : "sidebar-classic";
   }
   if (source.includes("research") || source.includes("robot")) return "research";
   if (source.includes("minimal") || source.includes("puneet")) return "minimal";
@@ -82,60 +84,96 @@ function previewDataFromResume(resume) {
   };
 }
 
-function themeForVariant(variant) {
-  if (variant === "sidebar-classic") {
-    return {
-      accent: "#2563eb",
-      accentSoft: "rgba(37,99,235,0.14)",
-      shell: "linear-gradient(180deg, rgba(239,246,255,0.92) 0%, rgba(219,234,254,0.76) 100%)",
-      paper: "#ffffff",
-      ink: "#0f172a",
-      muted: "#475569",
-      rail: "linear-gradient(180deg, #eff6ff 0%, #dbeafe 100%)",
-      badge: "#dbeafe",
-      badgeText: "#1d4ed8",
-    };
-  }
+function themeForVariant(variant, accentOverride) {
+  const base = (() => {
+    if (variant === "sidebar-classic") {
+      return {
+        accent: "#2563eb",
+        shell: "linear-gradient(180deg, rgba(239,246,255,0.92) 0%, rgba(219,234,254,0.76) 100%)",
+        paper: "#ffffff",
+        ink: "#0f172a",
+        muted: "#475569",
+        rail: "linear-gradient(180deg, #eff6ff 0%, #dbeafe 100%)",
+        badge: "#dbeafe",
+        badgeText: "#1d4ed8",
+      };
+    }
 
-  if (variant === "research") {
-    return {
-      accent: "#0ea5e9",
-      accentSoft: "rgba(14,165,233,0.16)",
-      shell: "linear-gradient(180deg, rgba(8,47,73,0.35) 0%, rgba(15,23,42,0.72) 100%)",
-      paper: "#f8fafc",
-      ink: "#0f172a",
-      muted: "#526074",
-      rail: "linear-gradient(135deg, #0f172a 0%, #082f49 100%)",
-      badge: "#e0f2fe",
-      badgeText: "#0369a1",
-    };
-  }
+    if (variant === "research") {
+      return {
+        accent: "#0ea5e9",
+        shell: "linear-gradient(180deg, rgba(8,47,73,0.35) 0%, rgba(15,23,42,0.72) 100%)",
+        paper: "#f8fafc",
+        ink: "#0f172a",
+        muted: "#526074",
+        rail: "linear-gradient(135deg, #0f172a 0%, #082f49 100%)",
+        badge: "#e0f2fe",
+        badgeText: "#0369a1",
+      };
+    }
 
-  if (variant === "minimal") {
+    if (variant === "milano") {
+      return {
+        accent: "#e07a5f",
+        shell: "linear-gradient(180deg, rgba(255,247,237,0.95) 0%, rgba(255,255,255,0.88) 100%)",
+        paper: "#fffaf7",
+        ink: "#3d2c29",
+        muted: "#7c5c54",
+        rail: "linear-gradient(180deg, #e07a5f 0%, #c2410c 100%)",
+        badge: "#ffedd5",
+        badgeText: "#9a3412",
+      };
+    }
+
+    if (variant === "minimal") {
+      return {
+        accent: "#475569",
+        shell: "linear-gradient(180deg, rgba(241,245,249,0.95) 0%, rgba(255,255,255,0.88) 100%)",
+        paper: "#ffffff",
+        ink: "#0f172a",
+        muted: "#64748b",
+        rail: "linear-gradient(180deg, #f8fafc 0%, #e2e8f0 100%)",
+        badge: "#e2e8f0",
+        badgeText: "#334155",
+      };
+    }
+
     return {
-      accent: "#7c3aed",
-      accentSoft: "rgba(124,58,237,0.16)",
-      shell: "linear-gradient(180deg, rgba(243,232,255,0.9) 0%, rgba(255,255,255,0.82) 100%)",
+      accent: "#0f766e",
+      shell: "linear-gradient(180deg, rgba(236,253,250,0.9) 0%, rgba(255,255,255,0.82) 100%)",
       paper: "#ffffff",
-      ink: "#1f1635",
-      muted: "#5b5370",
-      rail: "linear-gradient(180deg, #faf5ff 0%, #ede9fe 100%)",
-      badge: "#f3e8ff",
-      badgeText: "#6d28d9",
+      ink: "#102a2a",
+      muted: "#4b6363",
+      rail: "linear-gradient(180deg, #f0fdfa 0%, #ccfbf1 100%)",
+      badge: "#ccfbf1",
+      badgeText: "#0f766e",
+    };
+  })();
+
+  if (!accentOverride) {
+    return {
+      ...base,
+      accentSoft: softFromHex(base.accent),
     };
   }
 
   return {
-    accent: "#0f766e",
-    accentSoft: "rgba(15,118,110,0.14)",
-    shell: "linear-gradient(180deg, rgba(236,253,250,0.9) 0%, rgba(255,255,255,0.82) 100%)",
-    paper: "#ffffff",
-    ink: "#102a2a",
-    muted: "#4b6363",
-    rail: "linear-gradient(180deg, #f0fdfa 0%, #ccfbf1 100%)",
-    badge: "#ccfbf1",
-    badgeText: "#0f766e",
+    ...base,
+    accent: accentOverride,
+    accentSoft: softFromHex(accentOverride),
+    badge: softFromHex(accentOverride, 0.18),
+    badgeText: accentOverride,
+    rail: `linear-gradient(180deg, ${softFromHex(accentOverride, 0.22)} 0%, ${softFromHex(accentOverride, 0.08)} 100%)`,
   };
+}
+
+function softFromHex(hex, alpha = 0.14) {
+  const raw = String(hex || "#0f766e").replace("#", "");
+  if (raw.length !== 6) return `rgba(15,118,110,${alpha})`;
+  const r = parseInt(raw.slice(0, 2), 16);
+  const g = parseInt(raw.slice(2, 4), 16);
+  const b = parseInt(raw.slice(4, 6), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
 }
 
 function SectionCard({ title, children, delay = 0 }) {
@@ -150,8 +188,8 @@ function SectionCard({ title, children, delay = 0 }) {
   );
 }
 
-function ModernPreview({ data, template, variant }) {
-  const theme = themeForVariant(variant);
+function ModernPreview({ data, template, variant, accentColor }) {
+  const theme = themeForVariant(variant, accentColor);
 
   return (
     <div
@@ -273,8 +311,8 @@ function ModernPreview({ data, template, variant }) {
   );
 }
 
-function SidebarPreview({ data, template }) {
-  const theme = themeForVariant("sidebar-classic");
+function SidebarPreview({ data, template, accentColor }) {
+  const theme = themeForVariant("sidebar-classic", accentColor);
 
   return (
     <div
@@ -381,16 +419,18 @@ function SidebarPreview({ data, template }) {
   );
 }
 
-export default function AnimatedResumePreview({ template, templateId, resume, className = "" }) {
+export default function AnimatedResumePreview({ template, templateId, resume, accentColor, className = "" }) {
   const variant = inferVariant(template, templateId);
   const data = previewDataFromResume(resume);
+  const parsed = resume?.parsed_json || resume || {};
+  const resolvedAccent = accentColor || parsed.accent_color || parsed.theme_accent || "";
 
   return (
     <div className={`w-full min-h-[280px] ${className}`}>
       {variant === "sidebar-classic" ? (
-        <SidebarPreview data={data} template={template} />
+        <SidebarPreview data={data} template={template} accentColor={resolvedAccent} />
       ) : (
-        <ModernPreview data={data} template={template} variant={variant} />
+        <ModernPreview data={data} template={template} variant={variant} accentColor={resolvedAccent} />
       )}
     </div>
   );

@@ -1,0 +1,84 @@
+\documentclass[11pt]{article}
+\usepackage[a4paper,margin=1in]{geometry}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{titlesec}
+\usepackage{parskip}
+\usepackage{multicol}
+\usepackage{hyperref}
+\usepackage{fontspec}  % Required for custom fonts
+
+% Font setup
+\setmainfont{Lato}  % Body font
+\newfontfamily\headingfont{Playfair Display}  % Header font
+
+% Define coral color
+\definecolor{coral}{RGB}{235,87,87}
+
+% Section title style
+\titleformat{\section}
+  {\headingfont\color{coral}\bfseries\Large}
+  {}
+  {0em}
+  {}
+
+\titleformat{\subsection}[runin]{\bfseries\itshape}{}{0em}{}
+
+\setlist[itemize]{leftmargin=1.5em, itemsep=0.5em}
+
+\begin{document}
+
+% Header
+{\headingfont\color{coral} \Huge \textbf{Hello}}\\[-0.2em]
+{\headingfont\LARGE \textbf{I’m Thomas Beasley}}\\[1em]
+3665 MARGARET STREET, HOUSTON, TX 47587 \\
+(770) 625-9660 \\
+\textbf{\color{coral}RICHARDW@GMAIL.COM} \\[1em]
+
+% Professional Summary
+\section*{Professional Summary}
+Financial Advisor with 7+ years of experience delivering financial/investment advisory services to high value clients. Proven success in managing multi-million dollar portfolios, driving profitability, and increasing ROI through skillful strategic planning, consulting, and financial advisory services.
+
+% Professional Experience
+\section*{Professional Experience}
+
+\textbf{\uppercase{MONTH 20XX - Present}} \\
+\textbf{Wells Fargo Advisors, Houston, TX – Senior Financial Advisor}
+\begin{itemize}
+    \item Deliver financial advice to clients, proposing strategies to achieve short and long-term objectives for investments, insurance, business and estate planning with minimal risk
+    \item Develop, review, and optimize investment portfolios for 300+ high value clients with over \$190M AUM (Assets Under Management)
+    \item Ensure maximum client satisfaction by providing exceptional and personalized service, enhancing client satisfaction ratings from 88\% to 99.9\% in less than 6 months
+    \item Work closely with specialists from multiple branches, managing investment portfolios for over 800 clients with over \$25M in assets under care
+\end{itemize}
+
+\textbf{\uppercase{MONTH 20XX - MONTH 20XX}} \\
+\textbf{SunTrust Investment Services, New Orleans, LA – Financial Advisor}
+\begin{itemize}
+    \item Served as knowledgeable financial advisor to clients, managing an over \$20.75M investment portfolio of 90+ individual and corporate clients
+    \item Devised and applied a new training and accountability program that increased productivity from \#10 to \#3 in the region in less than 2 year period
+    \item Partnered with cross-functional teams in consulting with clients to provide asset management risk strategy and mitigation, which increased AUM by 50\%
+\end{itemize}
+
+\textbf{\uppercase{MONTH 20XX - MONTH 20XX}} \\
+\textbf{Maverick Capital Management, New Orleans, LA – Financial Advisor}
+\begin{itemize}
+    \item Served as the primary point of contact for over 15 clients
+    \item Managed the portfolios of several major clients with over \$8.5M in total assets
+\end{itemize}
+
+% Education
+\section*{Education}
+\textbf{\uppercase{MONTH 20XX - MONTH 20XX}} \\
+\textbf{Louisiana State University, Baton Rouge, LA – Bachelor of Science in Business Administration}
+
+% Skills
+\section*{Skills}
+\begin{itemize}
+    \item Proficient in MS Office (Word, Excel, PowerPoint)
+    \item MS Project
+    \item Salesforce
+    \item TFS Project Management
+    \item Fluent in English, Spanish, and French
+\end{itemize}
+
+\end{document}

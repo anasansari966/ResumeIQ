@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from app.config import settings
+from app.services.llm_client import chat_complete, llm_configured
 
 
 def _brief_for_summary(resume_json: dict[str, Any]) -> dict[str, Any]:
@@ -42,11 +42,8 @@ def _brief_for_summary(resume_json: dict[str, Any]) -> dict[str, Any]:
 
 async def generate_profile_summary_from_fields(resume_json: dict[str, Any]) -> str:
     """2–3 professional lines from structured data only; no employers or degrees not in the payload."""
-    if not (settings.openai_api_key or "").strip():
+    if not llm_configured():
         raise ValueError("OPENAI_API_KEY is not configured")
-    from openai import AsyncOpenAI
-
-    client = AsyncOpenAI(api_key=settings.openai_api_key)
     brief = _brief_for_summary(resume_json)
     sys = (
         "Write exactly 2 or 3 short sentences for a resume Summary / Objective. "
@@ -54,11 +51,9 @@ async def generate_profile_summary_from_fields(resume_json: dict[str, Any]) -> s
         "No bullet points, no contact details, no URLs. Professional tone."
     )
     user = json.dumps(brief, ensure_ascii=False)
-    resp = await client.chat.completions.create(
-        model=settings.openai_parse_model,
-        messages=[{"role": "system", "content": sys}, {"role": "user", "content": user}],
+    text = await chat_complete(
+        [{"role": "system", "content": sys}, {"role": "user", "content": user}],
         temperature=0.35,
         max_tokens=200,
     )
-    text = (resp.choices[0].message.content or "").strip()
     return text[:1200]

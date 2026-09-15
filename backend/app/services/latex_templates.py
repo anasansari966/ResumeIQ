@@ -610,18 +610,35 @@ def _render_template_modern_emerald(resume_json: dict[str, Any]) -> str:
 
 
 def render_resume_latex(template_id: str, resume_json: dict[str, Any]) -> str:
+    from app.services.accent_colors import accent_from_resume, apply_accent_to_latex_preamble
+
     if template_id == LATEX_TEMPLATE_2:
-        return _render_template_2(resume_json)
-    if template_id == LATEX_TEMPLATE_ROBOTICS:
-        return _render_template_robotics(resume_json)
-    if template_id == LATEX_TEMPLATE_ATS:
-        return _render_template_ats(resume_json)
-    if template_id == LATEX_TEMPLATE_EXECUTIVE:
-        return _render_template_executive_navy(resume_json)
-    if template_id == LATEX_TEMPLATE_SLATE:
-        return _render_template_slate_minimal(resume_json)
-    if template_id == LATEX_TEMPLATE_DATA:
-        return _render_template_data_compact(resume_json)
-    if template_id == LATEX_TEMPLATE_EMERALD:
-        return _render_template_modern_emerald(resume_json)
-    return _render_template_1(resume_json)
+        tex = _render_template_2(resume_json)
+    elif template_id == LATEX_TEMPLATE_ROBOTICS:
+        tex = _render_template_robotics(resume_json)
+    elif template_id == LATEX_TEMPLATE_ATS:
+        tex = _render_template_ats(resume_json)
+    elif template_id == LATEX_TEMPLATE_EXECUTIVE:
+        tex = _render_template_executive_navy(resume_json)
+    elif template_id == LATEX_TEMPLATE_SLATE:
+        tex = _render_template_slate_minimal(resume_json)
+    elif template_id == LATEX_TEMPLATE_DATA:
+        tex = _render_template_data_compact(resume_json)
+    elif template_id == LATEX_TEMPLATE_EMERALD:
+        tex = _render_template_modern_emerald(resume_json)
+    else:
+        tex = _render_template_1(resume_json)
+
+    # Apply user accent on top of template defaults.
+    hex6 = accent_from_resume(resume_json)
+    m_begin = re.search(r"\\begin\s*\{\s*document\s*\}", tex, re.I)
+    if m_begin:
+        preamble = apply_accent_to_latex_preamble(tex[: m_begin.start()], resume_json)
+        tex = preamble + tex[m_begin.start() :]
+    else:
+        tex = tex.replace(r"\definecolor{accent}{HTML}{0e7490}", rf"\definecolor{{accent}}{{HTML}}{{{hex6}}}")
+        tex = tex.replace(r"\definecolor{accent}{HTML}{1e3a8a}", rf"\definecolor{{accent}}{{HTML}}{{{hex6}}}")
+        tex = tex.replace(r"\definecolor{accent}{HTML}{334155}", rf"\definecolor{{accent}}{{HTML}}{{{hex6}}}")
+        tex = tex.replace(r"\definecolor{accent}{HTML}{0f766e}", rf"\definecolor{{accent}}{{HTML}}{{{hex6}}}")
+        tex = tex.replace(r"\definecolor{accent}{HTML}{047857}", rf"\definecolor{{accent}}{{HTML}}{{{hex6}}}")
+    return tex

@@ -4,7 +4,6 @@ import logging
 import re
 from typing import Any
 
-from app.config import settings
 from app.schemas import ContactBlock, EducationItem, ExperienceItem, ProjectItem, ResumeSchema, SkillsBlock
 from app.services.entity_normalize import normalize_resume_entities
 from app.services.resume_parser import (
@@ -178,11 +177,9 @@ def _extract_projects_heuristic(text: str) -> list[dict[str, Any]]:
 
 async def llm_repair_resume_json(parsed: dict[str, Any], cleaned_text: str) -> dict[str, Any]:
     """Second pass: align JSON with full text (education, projects, employers)."""
-    from openai import AsyncOpenAI
-
+    from app.services.llm_client import chat_json
     from app.services.resume_salvage import strip_resume_internal_keys
 
-    client = AsyncOpenAI(api_key=settings.openai_api_key)
     schema_keys = list(ResumeSchema.model_json_schema().get("properties", {}).keys())
     system = (
         "You output ONLY valid JSON for ResumeSchema. "
@@ -202,17 +199,14 @@ async def llm_repair_resume_json(parsed: dict[str, Any], cleaned_text: str) -> d
         },
         ensure_ascii=False,
     )
-    resp = await client.chat.completions.create(
-        model=settings.openai_parse_model,
-        messages=[
+    data = await chat_json(
+        [
             {"role": "system", "content": system + f"\nKeys: {schema_keys}"},
             {"role": "user", "content": payload},
         ],
-        response_format={"type": "json_object"},
         temperature=0.05,
+        max_tokens=8192,
     )
-    text = resp.choices[0].message.content or "{}"
-    data = json.loads(text)
     resume = ResumeSchema.model_validate(data)
     dumped = resume.model_dump()
     contact = ContactBlock.model_validate(dumped.get("contact") or {})
@@ -222,21 +216,232 @@ async def llm_repair_resume_json(parsed: dict[str, Any], cleaned_text: str) -> d
     return dumped
 
 
+async def structure_resume_for_ats_template(
+    parsed: dict[str, Any],
+    cleaned_text: str,
+    *,
+    template_name: str = "",
+    template_style: str = "",
+) -> dict[str, Any]:
+    """
+    Use OpenAI to reorganize extracted resume facts into a clean ATS-ready schema
+    covering every section mentioned in the source (contact, summary, experience,
+    education, skills, projects, certifications, languages, awards, etc.).
+    """
+    from app.services.llm_client import chat_json, llm_configured
+    from app.services.resume_salvage import strip_resume_internal_keys
+
+    if not llm_configured():
+        return rule_normalize_resume(parsed, cleaned_text)
+
+    draft = strip_resume_internal_keys(parsed)
+    source_text = (cleaned_text or "").strip() or str(parsed.get("_resumeiq_cleaned") or "").strip()
+    if len(source_text) < 80:
+        # Fall back to any raw text fields that may still be on the draft.
+        for key in ("raw_text", "full_text", "text"):
+            extra = str(parsed.get(key) or "").strip()
+            if len(extra) > len(source_text):
+                source_text = extra
+
+    schema_example = {
+        "contact": {
+            "name": "",
+            "email": "",
+            "phone": "",
+            "location": "",
+            "linkedin": "",
+            "github": "",
+        },
+        "summary": "",
+        "summary_origin": "document",
+        "experience": [
+            {
+                "company": "",
+                "title": "",
+                "start_date": "",
+                "end_date": "",
+                "bullets": ["achievement"],
+                "description": [],
+            }
+        ],
+        "education": [
+            {
+                "institution": "",
+                "degree": "",
+                "field": "",
+                "year": "",
+                "gpa": None,
+            }
+        ],
+        "skills": {
+            "technical": ["skill"],
+            "soft": [],
+            "tools": [],
+            "certifications": [],
+        },
+        "projects": [
+            {
+                "name": "",
+                "description": "",
+                "tech_stack": [],
+                "link": None,
+            }
+        ],
+        "languages": [],
+        "publications": [],
+        "awards": [],
+        "leadership": [],
+        "extracurricular": [],
+    }
+
+    system = (
+        "You are an ATS resume structuring engine. Output ONLY valid JSON matching ResumeSchema.\n"
+        f"Target template: {template_name or 'ATS resume'} ({template_style or 'ATS'}).\n\n"
+        "GOAL: Capture EVERY section and fact mentioned in the resume text and draft JSON. "
+        "Do not drop content. Reorganize and clean wording, but keep coverage complete.\n\n"
+        "REQUIRED SECTIONS (fill from source when present; use [] / \"\" when truly absent):\n"
+        "1) contact — name, email, phone, location, linkedin, github\n"
+        "2) summary — 2–4 ATS sentences (role, domain, impact). No contact info. "
+        "If a Summary/Objective/Profile exists in the resume, rewrite from that; else synthesize from experience.\n"
+        "3) experience — ALL jobs/internships reverse-chronological. Real company + title + dates when known. "
+        "3–8 concise achievement bullets each (action + result). Never invent employers.\n"
+        "4) education — ALL schools/degrees/fields/years/GPA mentioned.\n"
+        "5) skills — technical, tools, soft, and certifications as separate lists (deduped ATS keywords).\n"
+        "6) projects — ALL named projects with description + tech_stack when present.\n"
+        "7) languages, publications, awards, leadership, extracurricular — include every item found.\n\n"
+        "RULES:\n"
+        "- Prefer resume_text as ground truth; use draft_resume_json to recover structure already extracted.\n"
+        "- If draft has a section the text also supports, keep/improve it — do not empty it.\n"
+        "- Never fabricate employers, degrees, projects, or certifications.\n"
+        "- summary_origin = \"document\" if a summary exists in the source, else \"model\".\n"
+        f"- Shape example (types only): {json.dumps(schema_example, ensure_ascii=False)}"
+    )
+    payload = json.dumps(
+        {
+            "draft_resume_json": draft,
+            "resume_text": source_text[:16_000],
+            "template_name": template_name,
+            "template_style": template_style,
+            "must_include_if_present": [
+                "experience",
+                "education",
+                "skills",
+                "projects",
+                "certifications",
+                "languages",
+                "awards",
+                "leadership",
+                "extracurricular",
+                "publications",
+            ],
+        },
+        ensure_ascii=False,
+    )
+    try:
+        data = await chat_json(
+            [
+                {"role": "system", "content": system},
+                {"role": "user", "content": payload},
+            ],
+            temperature=0.1,
+            max_tokens=8192,
+        )
+        resume = ResumeSchema.model_validate(data)
+        dumped = resume.model_dump()
+        contact = ContactBlock.model_validate(dumped.get("contact") or {})
+        dumped["summary"] = _strip_contact_noise_from_summary(dumped.get("summary") or "", contact)
+        dumped = _backfill_empty_sections(dumped, draft)
+        meta_keys = {k: v for k, v in parsed.items() if str(k).startswith("_resumeiq")}
+        dumped.update(meta_keys)
+        return rule_normalize_resume(dumped, source_text)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("structure_resume_for_ats_template failed: %s", exc)
+        # Fall back to full finalize with LLM repair when possible.
+        try:
+            return await finalize_resume(parsed, source_text or cleaned_text, use_llm=True)
+        except Exception as inner:  # noqa: BLE001
+            log.warning("finalize fallback failed: %s", inner)
+            return rule_normalize_resume(parsed, source_text or cleaned_text)
+
+
+def _section_nonempty(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, list):
+        return any(_section_nonempty(x) for x in value)
+    if isinstance(value, dict):
+        return any(_section_nonempty(v) for v in value.values())
+    return True
+
+
+def _backfill_empty_sections(structured: dict[str, Any], draft: dict[str, Any]) -> dict[str, Any]:
+    """If the LLM omitted a section that the draft already had, keep the draft content."""
+    out = dict(structured or {})
+    src = draft or {}
+
+    for key in (
+        "experience",
+        "education",
+        "projects",
+        "languages",
+        "publications",
+        "awards",
+        "leadership",
+        "extracurricular",
+    ):
+        if not _section_nonempty(out.get(key)) and _section_nonempty(src.get(key)):
+            out[key] = src.get(key)
+
+    out_skills = out.get("skills") if isinstance(out.get("skills"), dict) else {}
+    src_skills = src.get("skills") if isinstance(src.get("skills"), dict) else {}
+    merged_skills = dict(out_skills)
+    for sk in ("technical", "soft", "tools", "certifications"):
+        if not _section_nonempty(merged_skills.get(sk)) and _section_nonempty(src_skills.get(sk)):
+            merged_skills[sk] = src_skills.get(sk)
+        elif _section_nonempty(merged_skills.get(sk)) and _section_nonempty(src_skills.get(sk)):
+            # Union while preserving LLM order first.
+            seen: set[str] = set()
+            combined: list[str] = []
+            for item in list(merged_skills.get(sk) or []) + list(src_skills.get(sk) or []):
+                s = str(item).strip()
+                low = s.lower()
+                if not s or low in seen:
+                    continue
+                seen.add(low)
+                combined.append(s)
+            merged_skills[sk] = combined
+    out["skills"] = merged_skills
+
+    if not _section_nonempty(out.get("summary")) and _section_nonempty(src.get("summary")):
+        out["summary"] = src.get("summary")
+
+    contact = out.get("contact") if isinstance(out.get("contact"), dict) else {}
+    src_contact = src.get("contact") if isinstance(src.get("contact"), dict) else {}
+    merged_contact = dict(contact)
+    for field in ("name", "email", "phone", "location", "linkedin", "github"):
+        if not str(merged_contact.get(field) or "").strip() and str(src_contact.get(field) or "").strip():
+            merged_contact[field] = src_contact.get(field)
+    out["contact"] = merged_contact
+    return out
+
+
 async def ensure_summary_if_missing(parsed: dict[str, Any], cleaned_text: str) -> dict[str, Any]:
     """Use OpenAI when summary is missing or too short after deterministic passes."""
+    from app.services.llm_client import chat_complete, llm_configured
+
     s = str(parsed.get("summary") or "").strip()
     if s and len(s) >= _SUMMARY_MIN_LEN:
         return parsed
-    if not settings.openai_api_key:
+    if not llm_configured():
         return parsed
-    from openai import AsyncOpenAI
 
     from app.services.resume_salvage import strip_resume_internal_keys
 
     contact = ContactBlock.model_validate(parsed.get("contact") or {})
     brief = strip_resume_internal_keys(parsed)
     excerpt = (cleaned_text or "")[:10_000]
-    client = AsyncOpenAI(api_key=settings.openai_api_key)
     sys = (
         "Write a professional resume summary: exactly 2–4 sentences. "
         "Focus on role, years/domain, and top strengths inferred ONLY from the provided facts. "
@@ -244,13 +449,12 @@ async def ensure_summary_if_missing(parsed: dict[str, Any], cleaned_text: str) -
     )
     payload = json.dumps({"resume_json": brief, "resume_text_excerpt": excerpt}, ensure_ascii=False)
     try:
-        resp = await client.chat.completions.create(
-            model=settings.openai_parse_model,
-            messages=[{"role": "system", "content": sys}, {"role": "user", "content": payload}],
+        text = await chat_complete(
+            [{"role": "system", "content": sys}, {"role": "user", "content": payload}],
             temperature=0.25,
             max_tokens=280,
         )
-        text = (resp.choices[0].message.content or "").strip()
+        text = (text or "").strip()
         if not text:
             return parsed
         parsed = dict(parsed)
@@ -261,13 +465,15 @@ async def ensure_summary_if_missing(parsed: dict[str, Any], cleaned_text: str) -
         return parsed
 
 
-async def finalize_resume(parsed: dict[str, Any], cleaned_text: str) -> dict[str, Any]:
+async def finalize_resume(parsed: dict[str, Any], cleaned_text: str, *, use_llm: bool = True) -> dict[str, Any]:
+    from app.services.llm_client import llm_configured
+
     meta = parsed.get("_resumeiq_cleaned")
     base = {k: v for k, v in parsed.items() if not str(k).startswith("_resumeiq")}
     if meta:
         base["_resumeiq_cleaned"] = meta
     normalized = rule_normalize_resume(base, cleaned_text)
-    if settings.openai_api_key:
+    if use_llm and llm_configured():
         try:
             normalized = await llm_repair_resume_json(normalized, cleaned_text)
             normalized = rule_normalize_resume(normalized, cleaned_text)
@@ -275,7 +481,7 @@ async def finalize_resume(parsed: dict[str, Any], cleaned_text: str) -> dict[str
             log.warning("llm_repair_resume_json failed: %s", e)
     normalized = comprehensive_salvage(normalized, cleaned_text)
     normalized = rule_normalize_resume(normalized, cleaned_text)
-    if settings.openai_api_key:
+    if use_llm and llm_configured():
         normalized = await ensure_summary_if_missing(normalized, cleaned_text)
         normalized = rule_normalize_resume(normalized, cleaned_text)
     normalized = normalize_resume_entities(normalized)

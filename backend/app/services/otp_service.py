@@ -35,11 +35,19 @@ def _send_email(email: str, subject: str, body: str) -> bool:
         msg["To"] = email
         msg["Subject"] = subject
         msg.set_content(body)
-        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=20) as s:
-            s.starttls()
-            if settings.smtp_user:
-                s.login(settings.smtp_user, settings.smtp_password)
-            s.send_message(msg)
+        host = settings.smtp_host
+        port = int(settings.smtp_port or 587)
+        if port == 465:
+            with smtplib.SMTP_SSL(host, port, timeout=20) as s:
+                if settings.smtp_user:
+                    s.login(settings.smtp_user, settings.smtp_password)
+                s.send_message(msg)
+        else:
+            with smtplib.SMTP(host, port, timeout=20) as s:
+                s.starttls()
+                if settings.smtp_user:
+                    s.login(settings.smtp_user, settings.smtp_password)
+                s.send_message(msg)
         return True
     except Exception as e:
         log.warning("OTP email send failed: %s", e)

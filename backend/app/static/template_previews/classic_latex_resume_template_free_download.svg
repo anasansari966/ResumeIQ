@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="360" height="220" viewBox="0 0 360 220">
+  <rect width="360" height="220" fill="#fafaf9"/>
+  <rect x="40" y="36" width="280" height="16" rx="1" fill="#44403c"/>
+  <rect x="40" y="58" width="180" height="5" rx="1" fill="#78716c"/>
+  <rect x="40" y="68" width="220" height="5" rx="1" fill="#a8a29e"/>
+  <line x1="40" y1="88" x2="320" y2="88" stroke="#b45309" stroke-width="2"/>
+  <rect x="40" y="104" width="100" height="7" rx="1" fill="#57534e"/>
+  <rect x="40" y="118" width="300" height="4" rx="1" fill="#d6d3d1"/>
+  <rect x="40" y="126" width="290" height="4" rx="1" fill="#d6d3d1"/>
+  <rect x="40" y="134" width="270" height="4" rx="1" fill="#d6d3d1"/>
+  <rect x="40" y="158" width="80" height="7" rx="1" fill="#57534e"/>
+  <rect x="40" y="172" width="300" height="4" rx="1" fill="#e7e5e4"/>
+  <rect x="40" y="180" width="280" height="4" rx="1" fill="#e7e5e4"/>
+  <text x="180" y="212" text-anchor="middle" font-family="Georgia,serif" font-size="11" fill="#57534e">Classic</text>
+</svg>

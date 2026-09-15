@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
-import { api } from "../api.js";
+import api from "../api.js";
 
 function emptyDraft() {
   return {
@@ -158,7 +158,7 @@ export default function ResumeStructureEditor({ resume, onSaved, title = "Struct
     try {
       const body = buildResumePayload(draft);
       const filteredProjects = body.projects.filter((p) => (p.name || "").trim() || (p.description || "").trim());
-      await api(`/api/v1/resumes/${resume.id}`, {
+      await api(`/resumes/${resume.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ parsed_json: { ...body, projects: filteredProjects }, recalc_ats: true }),
@@ -177,7 +177,7 @@ export default function ResumeStructureEditor({ resume, onSaved, title = "Struct
     setGenLoading(true);
     try {
       const body = buildResumePayload(draft);
-      const out = await api(`/api/v1/resumes/${resume.id}/generate-summary`, {
+      const out = await api(`/resumes/${resume.id}/generate-summary`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ parsed_json: body }),
@@ -222,7 +222,7 @@ export default function ResumeStructureEditor({ resume, onSaved, title = "Struct
             type="button"
             onClick={save}
             disabled={saving || !resume?.id}
-            className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-cyan-500 to-indigo-600 text-white text-xs font-medium disabled:opacity-50 shadow-md"
+            className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-cyan-500 to-teal-600 text-white text-xs font-medium disabled:opacity-50 shadow-md"
           >
             {saving ? "Saving…" : "Save edits"}
           </button>

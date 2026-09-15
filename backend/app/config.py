@@ -40,13 +40,30 @@ class Settings(BaseSettings):
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 60 * 24
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+    # OpenAI (primary LLM for parse, summary, ATS structure, tailor, jobs AI)
     openai_api_key: str = Field(
         default="",
         validation_alias=AliasChoices("OPENAI_API_KEY", "openai_api_key"),
     )
-    openai_parse_model: str = Field(
+    openai_base_url: str = Field(
+        default="https://api.openai.com/v1",
+        validation_alias=AliasChoices("OPENAI_BASE_URL", "OPENAI_API_BASE", "openai_base_url"),
+    )
+    openai_model: str = Field(
         default="gpt-4o-mini",
-        validation_alias=AliasChoices("OPENAI_MODEL", "OPENAI_PARSE_MODEL", "openai_parse_model"),
+        validation_alias=AliasChoices("OPENAI_MODEL", "openai_model"),
+    )
+    openai_temperature: float = Field(
+        default=0.2,
+        validation_alias=AliasChoices("OPENAI_TEMPERATURE", "openai_temperature"),
+    )
+    openai_max_tokens: int = Field(
+        default=4096,
+        validation_alias=AliasChoices("OPENAI_MAX_TOKENS", "openai_max_tokens"),
+    )
+    openai_timeout: float = Field(
+        default=120.0,
+        validation_alias=AliasChoices("OPENAI_TIMEOUT", "openai_timeout"),
     )
     # Legacy RapidAPI JSearch (unused when SerpAPI is configured)
     rapidapi_key: str = Field(default="", validation_alias=AliasChoices("RAPIDAPI_KEY", "rapidapi_key"))
@@ -107,7 +124,8 @@ class Settings(BaseSettings):
             "jobspy_linkedin_omit_time_filter_hours_gte",
         ),
     )
-    # Comma-separated JobSpy boards. Default (empty): linkedin,indeed,google. Optional: zip_recruiter,bayt,bdjobs
+    # Comma-separated JobSpy boards. Default: linkedin,indeed,glassdoor,google.
+    # Optional: zip_recruiter,bayt,bdjobs
     jobspy_sites: str = Field(
         default="",
         validation_alias=AliasChoices("JOBSPY_SITES", "jobspy_sites"),
@@ -126,6 +144,18 @@ class Settings(BaseSettings):
     )
     templates_dir: str = ""
     resume_template_docx: str = "Document 3.docx"
+    # Prepended to PATH for LaTeX subprocesses. When empty, the backend still scans common Windows MiKTeX / TeX Live folders.
+    latex_path_extra: str = Field(
+        default="",
+        validation_alias=AliasChoices("LATEX_PATH_EXTRA", "latex_path_extra"),
+        description="Extra PATH segments for pdflatex; optional if MiKTeX is in a default install location.",
+    )
+    # Full path to pdflatex.exe (Windows) or pdflatex (Unix). Use when shutil.which fails from Cursor/uvicorn PATH.
+    latex_pdflatex_path: str = Field(
+        default="",
+        validation_alias=AliasChoices("LATEX_PDFLATEX", "PDFLATEX_PATH", "latex_pdflatex_path"),
+        description="Absolute path to the pdflatex binary.",
+    )
     # OTP email (optional; OTP always logged when SMTP disabled)
     smtp_host: str = ""
     smtp_port: int = 587

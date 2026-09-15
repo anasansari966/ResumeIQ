@@ -11,6 +11,7 @@ class User(SQLModel, table=True):
     hashed_password: str
     name: str = ""
     plan: str = Field(default="free")
+    role: str = Field(default="user")  # user | superadmin
     email_verified: bool = Field(default=False)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     last_login: Optional[datetime] = None

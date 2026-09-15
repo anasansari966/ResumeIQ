@@ -20,6 +20,7 @@ class UserPublic(BaseModel):
     email: str
     name: str
     plan: str
+    role: str = "user"
 
 
 class RegisterOut(BaseModel):
@@ -66,7 +67,7 @@ class ContactBlock(BaseModel):
 
 
 def _coerce_resume_str(v: Any) -> str:
-    """OpenAI JSON often returns years/dates as ints; schema uses strings everywhere."""
+    """LLM JSON often returns years/dates as ints; schema uses strings everywhere."""
     if v is None:
         return ""
     if isinstance(v, bool):
@@ -206,6 +207,9 @@ class GenerateSummaryIn(BaseModel):
 
 class ResumeTemplateSelectIn(BaseModel):
     template_id: str = Field(min_length=1)
+    accent_color: Optional[str] = None
+    # When true, OpenAI restructures extracted content into ATS-ready sections for the template.
+    restructure: bool = True
 
 
 class JDAnalyzeIn(BaseModel):
@@ -294,6 +298,10 @@ class JobOut(BaseModel):
     matching_skills: list[str] = Field(default_factory=list)
     missing_skills: list[str] = Field(default_factory=list)
     fit_rationale: Optional[str] = None  # LLM shortlist explanation when present
+    is_eligible: Optional[bool] = None
+    eligibility_reasons: list[str] = Field(default_factory=list)
+    candidate_experience_years: Optional[int] = None
+    required_experience_years: Optional[int] = None
 
     model_config = {"from_attributes": True}
 
@@ -304,6 +312,7 @@ class JSearchSmartIn(BaseModel):
     resume_id: Optional[int] = None
     manual_query: str = ""
     country: str = ""
+    location: str = ""
     work_type: str = "all"
     date_posted: str = "all"
     page: int = 1
@@ -330,3 +339,12 @@ class TemplateMeta(BaseModel):
     description: str = ""
     preview_variant: str = "clean"
     file_name: Optional[str] = None
+    preview_url: str = Field(
+        default="",
+        description="Same-origin path to preview image; prefix with API origin when using a separate dev server.",
+    )
+
+
+class TemplateImportWebIn(BaseModel):
+    url: str = Field(min_length=8, max_length=2048)
+    name: Optional[str] = Field(default=None, max_length=120)

@@ -1,3 +1,5 @@
+import logging
+import re
 from datetime import datetime
 from typing import Annotated
 
@@ -13,14 +15,31 @@ from app.schemas import GenerateSummaryIn, ResumeOut, ResumeTemplateSelectIn, Re
 from app.services.ats_engine import score_resume_jd
 from app.config import settings
 from app.services.resume_enhance import generate_profile_summary_from_fields
-from app.services.resume_export import export_resume_pdf
-from app.services.resume_finalize import ensure_summary_if_missing, rule_normalize_resume
+from app.services.resume_export import export_resume_pdf_with_mode
+from app.services.resume_finalize import (
+    ensure_summary_if_missing,
+    rule_normalize_resume,
+    structure_resume_for_ats_template,
+)
 from app.services.resume_parser import parse_upload
 from app.services.resume_salvage import comprehensive_salvage
 from app.services.resume_template_engine import render_resume_template_tex
 from app.services.template_registry import first_resume_template_id, get_template_descriptor, is_supported_template_id
 
 router = APIRouter(prefix="/api/v1/resumes", tags=["resumes"])
+log = logging.getLogger(__name__)
+
+
+def _attachment_filename(resume_id: int, template_id: str, ext: str) -> str:
+    slug = re.sub(r"[^a-zA-Z0-9._-]+", "_", (template_id or "resume").strip("_"))[:48] or "resume"
+    return f"resume-{resume_id}-{slug}.{ext}"
+
+
+def _blend_ats_with_template(content_score: float, template_id: str) -> float:
+    tid = (template_id or "").strip() or first_resume_template_id()
+    desc = get_template_descriptor(tid)
+    template_ats = float(desc.ats_score) if desc and getattr(desc, "ats_score", None) is not None else 94.0
+    return round(min(100.0, 0.42 * float(content_score) + 0.58 * template_ats), 1)
 
 
 def _resume_out(r: Resume) -> ResumeOut:
@@ -135,10 +154,11 @@ async def export_resume_tex(
         raise HTTPException(404, "Template not found")
     tid = requested or (r.active_template_id or "").strip() or first_resume_template_id()
     tex = render_resume_template_tex(tid, dict(r.parsed_json or {}))
+    fn = _attachment_filename(resume_id, tid, "tex")
     return Response(
         content=tex.encode("utf-8"),
         media_type="text/x-tex; charset=utf-8",
-        headers={"Content-Disposition": 'attachment; filename="resume.tex"'},
+        headers={"Content-Disposition": f'attachment; filename="{fn}"'},
     )
 
 
@@ -157,11 +177,21 @@ async def export_resume_pdf_endpoint(
     if requested and not is_supported_template_id(requested):
         raise HTTPException(404, "Template not found")
     tid = requested or (r.active_template_id or "").strip() or first_resume_template_id()
-    pdf_b = export_resume_pdf(dict(r.parsed_json or {}), tid)
+    pdf_b, render_mode = export_resume_pdf_with_mode(dict(r.parsed_json or {}), tid)
+    if pdf_b is None or render_mode == "latex_unavailable":
+        raise HTTPException(
+            status_code=503,
+            detail="PDF could not be generated. Please try again.",
+        )
+    fn = _attachment_filename(resume_id, tid, "pdf")
     return Response(
         content=pdf_b,
         media_type="application/pdf",
-        headers={"Content-Disposition": 'attachment; filename="resume.pdf"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="{fn}"',
+            "X-ResumeIQ-Render-Mode": render_mode,
+            "X-ResumeIQ-Template-Id": tid,
+        },
     )
 
 
@@ -186,21 +216,72 @@ async def select_resume_template(
         raise HTTPException(404, "Template not found")
 
     desc = get_template_descriptor(body.template_id)
-    r.active_template_id = body.template_id
-    r.updated_at = datetime.utcnow()
-    session.add(r)
-    session.add(
-        ResumeTemplateSelection(
-            resume_id=r.id,
-            user_id=user.id,
-            template_id=body.template_id,
-            template_name=desc.name if desc else body.template_id,
-            source=desc.source if desc else "unknown",
+    data = dict(r.parsed_json or {})
+    cleaned = str(data.get("_resumeiq_cleaned") or "").strip()
+    if not cleaned:
+        # Recover text from stored fields so OpenAI can structure every section.
+        for key in ("raw_text", "full_text", "text"):
+            cleaned = str(data.get(key) or "").strip()
+            if cleaned:
+                break
+    llm_note = ""
+
+    if body.restructure:
+        from app.services.llm_client import llm_key_diagnosis
+
+        diag = llm_key_diagnosis()
+        if not diag.get("ok"):
+            # Fail fast with a clear client error instead of a generic 500.
+            raise HTTPException(status_code=400, detail=str(diag.get("message") or "OpenAI is not configured correctly."))
+        try:
+            data = await structure_resume_for_ats_template(
+                data,
+                cleaned,
+                template_name=desc.name if desc else body.template_id,
+                template_style=desc.style if desc else "ATS",
+            )
+            if cleaned and not str(data.get("_resumeiq_cleaned") or "").strip():
+                data["_resumeiq_cleaned"] = cleaned
+            llm_note = "structured"
+        except Exception as exc:  # noqa: BLE001
+            log.exception("select-template LLM restructure failed")
+            # Keep template selection working with deterministic cleanup.
+            data = rule_normalize_resume(data, cleaned)
+            llm_note = f"fallback:{exc}"
+
+    try:
+        content_score, _, _ = score_resume_jd(data, jd_text="")
+        blended = _blend_ats_with_template(content_score, body.template_id)
+        data["ats_score_baseline"] = blended
+        data["active_template_id"] = body.template_id
+        if llm_note:
+            data["_resumeiq_llm_structure"] = llm_note
+        if body.accent_color:
+            from app.services.accent_colors import normalize_accent_hex
+
+            data["accent_color"] = f"#{normalize_accent_hex(body.accent_color)}"
+        r.parsed_json = data
+        r.ats_baseline = blended
+        r.active_template_id = body.template_id
+        r.updated_at = datetime.utcnow()
+        session.add(r)
+        session.add(
+            ResumeTemplateSelection(
+                resume_id=r.id,
+                user_id=user.id,
+                template_id=body.template_id,
+                template_name=desc.name if desc else body.template_id,
+                source=desc.source if desc else "unknown",
+            )
         )
-    )
-    await session.commit()
-    await session.refresh(r)
-    return _resume_out(r)
+        await session.commit()
+        await session.refresh(r)
+        return _resume_out(r)
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        log.exception("select-template failed")
+        raise HTTPException(status_code=500, detail=f"Could not apply template: {exc}") from exc
 
 
 @router.post("/{resume_id}/re-salvage", response_model=ResumeOut)
@@ -217,7 +298,9 @@ async def re_salvage_resume(
     data = dict(r.parsed_json or {})
     data = comprehensive_salvage(data, meta)
     normalized = rule_normalize_resume(data, meta)
-    if settings.openai_api_key:
+    from app.services.llm_client import llm_configured
+
+    if llm_configured():
         normalized = await ensure_summary_if_missing(normalized, meta)
         normalized = rule_normalize_resume(normalized, meta)
     overall, _, _ = score_resume_jd(normalized, jd_text="")
@@ -273,16 +356,24 @@ async def update_resume(
         normalized = rule_normalize_resume(merged, meta or "")
     except Exception:
         raise HTTPException(400, "Invalid resume JSON structure")
-    if settings.openai_api_key:
+    from app.services.llm_client import llm_configured
+
+    if llm_configured():
         normalized = await ensure_summary_if_missing(normalized, meta or "")
         normalized = rule_normalize_resume(normalized, meta or "")
     r.parsed_json = normalized
     r.updated_at = datetime.utcnow()
     if body.recalc_ats:
         overall, _, _ = score_resume_jd(normalized, jd_text="")
-        normalized["ats_score_baseline"] = overall
+        blended = _blend_ats_with_template(overall, (r.active_template_id or "").strip())
+        normalized["ats_score_baseline"] = blended
         r.parsed_json = normalized
-        r.ats_baseline = overall
+        r.ats_baseline = blended
+    elif normalized.get("ats_score_baseline") is not None:
+        try:
+            r.ats_baseline = float(normalized["ats_score_baseline"])
+        except (TypeError, ValueError):
+            pass
     session.add(r)
     await session.commit()
     await session.refresh(r)

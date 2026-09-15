@@ -9,9 +9,9 @@ from app.deps import CurrentUser
 from app.models_db import Application, JobListing, Resume
 from app.schemas import JSearchSmartIn, JSearchSmartOut, JobOut
 from app.services.job_description_clean import clean_job_description
+from app.services.job_eligibility import analyze_job_eligibility
 from app.services.job_match_preference import skills_from_jsearch_item
 from app.services.job_page_enrich import fetch_description_from_apply_url
-from app.services.job_seeds import match_score_resume
 from app.services.jobspy_pipeline import smart_linkedin_fetch
 
 router = APIRouter(prefix="/api/v1/jobs", tags=["jobs"])
@@ -21,8 +21,17 @@ def _to_job_out(j: JobListing, resume_json: Optional[dict] = None) -> JobOut:
     match_score = None
     matching_skills: list[str] = []
     missing_skills: list[str] = []
+    analysis = None
     if resume_json is not None:
-        match_score, matching_skills, missing_skills = match_score_resume(j.skills or [], resume_json)
+        analysis = analyze_job_eligibility(
+            title=j.title,
+            description=j.description or "",
+            job_skills=j.skills or [],
+            resume_json=resume_json,
+        )
+        match_score = analysis.score
+        matching_skills = analysis.matching_skills
+        missing_skills = analysis.missing_skills
     return JobOut(
         id=j.id,
         source=j.source,
@@ -39,6 +48,11 @@ def _to_job_out(j: JobListing, resume_json: Optional[dict] = None) -> JobOut:
         match_score=match_score,
         matching_skills=matching_skills,
         missing_skills=missing_skills,
+        fit_rationale=analysis.rationale if analysis else None,
+        is_eligible=analysis.eligible if analysis else None,
+        eligibility_reasons=analysis.reasons if analysis else [],
+        candidate_experience_years=analysis.candidate_years if analysis else None,
+        required_experience_years=analysis.required_years if analysis else None,
     )
 
 
@@ -58,6 +72,36 @@ async def _append_jobs_from_applications(
                 jobs.append(row)
                 seen.add(jid)
     return jobs
+
+
+async def _stored_eligible_jobs(
+    session: AsyncSession,
+    resume_json: dict,
+    *,
+    query: str = "",
+    location: str = "",
+    limit: int = 18,
+) -> list[JobOut]:
+    """Fallback recommendations when live boards are unavailable or fully filtered out."""
+    result = await session.exec(select(JobListing))
+    query_terms = [term for term in query.lower().split() if len(term) > 2]
+    location_lower = location.strip().lower()
+    matches: list[JobOut] = []
+    for row in result.all():
+        haystack = f"{row.title} {row.description} {' '.join(row.skills or [])}".lower()
+        if query_terms and not any(term in haystack for term in query_terms):
+            continue
+        if (
+            location_lower
+            and location_lower not in (row.location or "").lower()
+            and "remote" not in (row.remote or "").lower()
+        ):
+            continue
+        job = _to_job_out(row, resume_json)
+        if job.is_eligible:
+            matches.append(job)
+    matches.sort(key=lambda job: (job.match_score or 0), reverse=True)
+    return matches[: max(1, limit)]
 
 
 @router.post("/jsearch/smart", response_model=JSearchSmartOut)
@@ -87,11 +131,40 @@ async def jsearch_smart_search(
             body.date_posted,
             body.page,
             body.num_pages,
+            body.location,
         )
     except ValueError as e:
         raise HTTPException(503, str(e)) from e
     except Exception as e:
         raise HTTPException(502, f"Job search failed: {e}") from e
+    if resume_json and (len(jobs) < 12 or len({job.source for job in jobs if job.source}) < 2):
+        stored_jobs = await _stored_eligible_jobs(
+            session,
+            resume_json,
+            query=body.manual_query,
+            location=body.location,
+        )
+        seen_ids = {job.id for job in jobs}
+        seen_urls = {job.apply_url for job in jobs if job.apply_url}
+        additions = [
+            job
+            for job in stored_jobs
+            if job.id not in seen_ids and (not job.apply_url or job.apply_url not in seen_urls)
+        ]
+        if additions:
+            original_count = len(jobs)
+            jobs = sorted(
+                [*jobs, *additions],
+                key=lambda job: (job.match_score or 0),
+                reverse=True,
+            )[:18]
+            added_count = max(0, len(jobs) - original_count)
+            source_count = len({job.source for job in jobs if job.source})
+            msg = (
+                f"{msg} Added {added_count} eligible cached scrape"
+                f"{'s' if added_count != 1 else ''} so results cover {source_count} platform"
+                f"{'s' if source_count != 1 else ''}."
+            )
     return JSearchSmartOut(
         jobs=jobs,
         queries_used=queries_used,
@@ -176,6 +249,8 @@ async def match_jobs(
         jobs = [j for j in jobs if (j.source or "").lower() == "indeed"]
     jobs = await _append_jobs_from_applications(session, user.id, jobs)
     out = [_to_job_out(j, resume_json) for j in jobs]
+    if resume_json is not None:
+        out = [job for job in out if job.is_eligible]
     out.sort(key=lambda x: (x.match_score or 0), reverse=True)
     return out
 
@@ -211,5 +286,7 @@ async def search_jobs(
         filtered.append(j)
     filtered = await _append_jobs_from_applications(session, user.id, filtered)
     out = [_to_job_out(j, resume_json) for j in filtered]
+    if resume_json is not None:
+        out = [job for job in out if job.is_eligible]
     out.sort(key=lambda x: (x.match_score or 0), reverse=True)
     return out
